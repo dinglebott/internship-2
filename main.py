@@ -7,7 +7,6 @@ import cv2
 import cv_function
 import numpy as np
 from ultralytics import YOLO
-import tracking_stuff
 
 # initialisation for cv
 rtsp_out = "rtsp://127.0.0.1:8554/my_stream" 
@@ -189,10 +188,6 @@ async def cv(drone):
         print("Target reached")
         await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0, 0, 0, 0))  
 
-# tracking_stuff.startTrackingDrone
-
-
-
 # MAIN
 async def main():
     drone = System()
@@ -238,7 +233,7 @@ async def main():
     followTask = None
     while True:
         # take new commands
-        cmd = await asyncio.get_event_loop().run_in_executor(None, input, "Input command (W/A/S/D/C/V/F/STOP/X):")
+        cmd = await asyncio.get_event_loop().run_in_executor(None, input, "Input command (W/A/S/D/C/V/F/STOP/X/I):")
         
         # respond to command
         if cmd.upper() == "X": # land
@@ -264,9 +259,9 @@ async def main():
        #         followTask = asyncio.create_task(follow(drone))
        #         print("Follow mode started")
 
-        elif cmd.upper() == "C":
+        elif cmd.upper() == "I":
             if followTask is None or followTask.done():
-                followTask = asyncio.create_task(cv_function.cv_stuff(model, rtsp_in,rtsp_out,drone))
+                followTask = asyncio.create_task(cv_function.cv_stuff(model, rtsp_in,rtsp_out,drone,trackHeight,moveForward))
                 print("CV mode started")       
         
         elif cmd.upper() == "STOP": # stop follow

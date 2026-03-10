@@ -1,8 +1,6 @@
-
 import cv2
 import subprocess
 import threading
-from ultralytics import YOLO
 import socket
 import tracking_stuff
 
@@ -19,7 +17,7 @@ import tracking_stuff
 # function needs to come in after i click 'c' key, it only stops when function outputs a bbox coordinate
 # given a frame, output rtsp stream, function only ends when bbox coordinate is returned
 
-async def cv_stuff(model,rtsp_in,rtsp_out,drone):
+async def cv_stuff(model,rtsp_in,rtsp_out,drone,trackHeight,moveForward):
 
     UDP_IP = "10.110.246.66" # your rpi ip
     UDP_PORT = 9999
@@ -129,7 +127,7 @@ async def cv_stuff(model,rtsp_in,rtsp_out,drone):
                         actual_box.append(int(temp[0][3]-temp[0][1]))
                         print("starting tracking")
                         print("bbox", actual_box)
-                        await tracking_stuff.startTrackingDrone(frame,actual_box,reader,process,drone)
+                        await tracking_stuff.startTrackingDrone(frame,actual_box,reader,process,drone,trackHeight,moveForward)
                         break
 
     except KeyboardInterrupt:
