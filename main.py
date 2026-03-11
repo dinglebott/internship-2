@@ -2,7 +2,6 @@ from mavsdk import System
 from mavsdk.offboard import VelocityBodyYawspeed
 import asyncio
 import math
-import csrt_stuff
 import cv2
 import cv_function
 import numpy as np
@@ -55,7 +54,9 @@ async def down(drone):
 
 async def follow(drone):
     # start tracker
-    cap, roi_hist, track_window, term_crit = camshift_tracker.initTracker()
+    
+    tracker = cv2.TrackerCSRT_create()
+    tracker.init(frame, bbox)
     currentBox = screen = None
     # define success condition
     def reachedTarget():
@@ -113,53 +114,54 @@ async def follow(drone):
         await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0, 0, 0, 0))
 
 async def cv(drone):
-    # start tracker
-    bbox = cv_function.cv_stuff()
-    cap, frame = csrt_stuff.getBox()
-    # create CSRT tracker
-    tracker = cv2.TrackerCSRT_create()
-    # initialize tracker
-    tracker.init(frame, bbox)
-    currentBox = screen = None
-    # define success condition
-    def reachedTarget():
-        if currentBox and screen:
-            if getDist(currentBox, screen) <= 100 and currentBox["height"] >= 0.8*screen["height"]:
-                return True
-            else:
-                return False
-        else:
-            return False
-    
-    # following loop
+    lost_track = False
     try:
+        process,reader,xygrabber = cv_function.cv_init(rtsp_in,rtsp_out)
+        # xygrabber is actually the listener already
+
         while True:
-            if not reachedTarget():
-                # reset parameters
-                yaw = xvel = yvel = 0 # down is positive yvel
-                # update target box and screen
-                # get new frame, update
-                ret, frame = cap.read()
+            try:
+                frame,bbox,reader,process = cv_function.modified_cv_stuff(model,process,reader,xygrabber,lost_track)
+            except ValueError:
+                pass
+                
+            lost_track = False
+            currentBox = screen = None
+            tracker = cv2.TrackerCSRT_create()
+            tracker.init(frame, bbox)
+            while True:
+                ret, frame = reader.get_frame()
                 if not ret:
                     break
                 success, bbox = tracker.update(frame)
-                # display
                 if success:
                     x, y, w, h = [int(v) for v in bbox]
                     cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
                 else:
-                    cv2.putText(frame, "Tracking failure", (50, 80),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+                    lost_track = True
+                    
+                    break 
+                process.stdin.write(frame.tobytes())
+                # get new frame, update
+                yaw = xvel = yvel = 0 # down is positive yvel
+                currentBox = {
+                    "cx": bbox[0]+bbox[2]/2,
+                    "cy": bbox[1]+bbox[3]/2,
+                    "width": bbox[2],
+                    "height": bbox[3],
+                    "angle": 0
+                }
+                frameHeight, frameWidth = frame.shape[:2]
+                screen = {
+                    "cx": frameWidth / 2,
+                    "cy": frameHeight / 2,
+                    "width": frameWidth,
+                    "height": frameHeight
+                }
 
-                cv2.imshow("CSRT Tracking", frame) # change to rtsp output
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-                currentBox = bbox
                 if currentBox is None or screen is None:
                     await asyncio.sleep(0.1)
                     continue
-                
                 # correct drone direction
                 if currentBox["cx"] < screen["cx"] - 20:
                     yaw = -25
@@ -175,24 +177,24 @@ async def cv(drone):
                 if moveForward and getDist(currentBox, screen) <= 150:
                     xvel = 0.8
                 # command drone
+                print("moving drone")
+                print(xvel,yvel,yaw)
                 await drone.offboard.set_velocity_body(VelocityBodyYawspeed(xvel, 0, yvel, yaw))
                 await asyncio.sleep(0.1)
-            else:
-                break
-    # cancelled by STOP/X command
     except asyncio.CancelledError:
         print("Follow mode stopped")
         await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0, 0, 0, 0))
         raise # mark async task as cancelled - error caught again in main()
-    else:
-        print("Target reached")
-        await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0, 0, 0, 0))  
+
+
+
+
 
 # MAIN
 async def main():
     drone = System()
     print("Before connect called")
-    await drone.connect(system_address="udpin://0.0.0.0:14540")
+    await drone.connect(system_address="udpin://0.0.0.0:14540") # must be 0.0.0.0 for rpi to act as server
     print("After connect called")
 
     async for state in drone.core.connection_state():
@@ -254,15 +256,14 @@ async def main():
                     break
             break
         
-       # elif cmd.upper() == "F": # follow
-       #     if followTask is None or followTask.done():
-       #         followTask = asyncio.create_task(follow(drone))
-       #         print("Follow mode started")
-
+        elif cmd.upper() == "F": # follow
+            if followTask is None or followTask.done():
+                followTask = asyncio.create_task(follow(drone))
+                print("Follow mode started")
         elif cmd.upper() == "I":
             if followTask is None or followTask.done():
-                followTask = asyncio.create_task(cv_function.cv_stuff(model, rtsp_in,rtsp_out,drone,trackHeight,moveForward))
-                print("CV mode started")       
+                followTask = asyncio.create_task(cv(drone))
+                print("CV mode started")      
         
         elif cmd.upper() == "STOP": # stop follow
             if followTask and not followTask.done():
